@@ -1,0 +1,342 @@
+@ == PROGRAM SECTION == 
+.text
+.global _start
+.global INT_DIRECTOR
+_start:
+	@ Turn on GPIO1 CLK
+	LDR 	R0,		=0x02					@ Value to enable clock
+	LDR 	R1, 	=0x44E000AC			@ Address of CM_PER_GPIO1_CLKCTRL
+	STR 	R0, 	[R1]					@ Write
+	
+	@ Setup Stack:
+	LDR 	R13,	=STACK1 
+	ADD 	R13, R13, #0x1000
+	CPS #0x12
+	LDR R13, =STACK2
+	ADD R13, R13, #0x1000
+	CPS #0x13
+
+@@@@@@@@@GPIO addresses
+	LDR R0, =0x4804C000  @Address of original GPIO1 command location
+	LDR R3, =GPIO
+	STR R0, [R3]
+	ADD R1, R0, #0x194 @Address of Setdataout
+	LDR R3, =SETOUT
+	STR R1, [R3]  @Storing set data out address in set data out for easy access
+	ADD R2,  R0, #0x134 @Address of output enable
+	LDR R3, =OUTEN 
+	STR R2, [R3]   @Storing output enable address in OUTEN for easy access
+	ADD R2, R0, #0x190
+	LDR R3, =CLEAR
+	STR R2, [R3]
+	@@@@@@Button addresses
+	LDR R1, =BUTTON
+	ADD R2, R0, #0x138
+	STR R2, [R1]
+
+	@Interrupt controller
+	LDR R1, =0x48200000
+	MOV R2, #0x2
+	STR R2, [R1, #0x10]
+	MOV R2, #0x10
+	STR R2, [R1, #0xC8]
+	
+		
+
+	
+	
+	
+	
+	@ Set up timer2 clock
+	MOV R2, #0x2
+	LDR R1, =0x44E00080 @Address of clock control
+	STR R2, [R1]		@Turn on clock
+	LDR R1, =0x44E00508    @Address of clock selection timer
+	STR R2, [R1]
+	LDR R1, =0x48040000 @Starting address
+	MOV R2, #0x1 @Resets timer 2
+	STR R2, [R1, #0x10]    @Write to timer config register
+	MOV R2, #0x2		@Enable overflow interrupt
+	STR R2, [R1, #0x2C] @Address for overflow interrupt
+	LDR R2, =0xFFFFF333	@Timer for 100ms
+	STR R2, [R1, #0x40]	@Timer TLDR load register
+	STR R2, [R1, #0x3C]     @ Writes to TCRR
+	
+	
+ @Turn on the timer	
+	MOV R2, #0x03       @This turns on the timer
+	LDR R1, =0x48040038  @this is the address for TCLR
+	STR R2, [R1]
+
+	
+
+
+	
+	
+	
+	
+	
+	
+	
+	
+	@Enable IRQ
+	
+	MRS R3, CPSR
+	BIC R3, #0x80
+	MSR CPSR_c, R3
+	
+	
+	
+	
+	LDR R1, =COUNTER
+	MOV R0, #0
+	STR R0, [R1]
+	
+	
+	
+	
+	
+	
+Main:	
+	LDR R1, =COUNTER     @We check to make sure that R1 is less than 15
+	LDR R0, [R1]         @
+	CMP R0, #15          @
+	MOVGT R0, #0         @ If not, then we set it to 0
+	STRGT R0, [R1]       @
+	MOV R1, R0           @ Next we check to see if timerc is 9 or not. If so, we set R1 to 0 until the next interrupt.
+	LDR R2, =TIMERC      @
+	LDR R0, [R2]         @
+	CMP R0, #9           @
+	MOVEQ R1, #0         @
+	BL check             @Then we check if the button was pressed
+	CMP R0, #0x40000000   
+		BNE noteq    @Then we go in different directions
+		BEQ eq       @Not equal if not equal, equal if equal.
+	
+	
+noteq:	
+    @This converts the numbers into standard binary	
+	BL inorder
+	
+	B Main
+	
+	
+	
+@This is my equal to sub program, if the button is not pressed, it will go here instead of not equal to.
+eq:
+ @Converts to grey order
+ 	
+ 	BL greyorder
+	
+
+	B Main
+	
+	
+	
+	
+	
+	
+	
+	inorder: 
+STMFD SP!, {R2-R12, LR}
+MOV R5, R3
+MOV R0, #0x1E00000
+LDR R3, =CLEAR @I first clear the previous values, I’ve read that the data must be cleared FIRST 		   	         @before the output can be updated.
+LDR R3, [R3]
+STR R0, [R3] @Clear values
+LDR R4, =SETOUT @THEN I set the output
+LDR R4, [R4]
+
+LSL  R1, R1, #21 @Shifts the input into the GPIO slot 
+STR R1, [R4]  @Stores input value at SETOUT
+LSR  R1, R1, #21
+MOV R3, R5
+LDR R3, =OUTEN @I then enable the output
+LDR R3, [R3]
+MOV R0, #0xFE1FFFFF
+STR   R0, [R3]
+LDMFD SP!, {R2-R12, LR}
+MOV PC, LR
+
+
+
+	
+	
+	
+	greyorder: 
+
+STMFD SP!, {R2-R12, LR} 
+LDR R6, =0x6666
+LDR R7, =0x3C3C
+LDR R8, =0x0FF0
+LDR R9, =0xFF00
+
+MOV R5, R3
+MOV R0, #1
+LSL R0, R0, R1 @Shifts the bit locator by what number we are on. Because I transposed the Reflective Grey Code matrix at the beginning, this works very nicely for selecting numbers.
+AND R2, R9, R0 @Selects the most significant bit, shifts it to bit 1
+LSR R2, R2, R1 
+AND R3, R8, R0    @Does the same thing for each row on the transposed matrix
+LSR R3, R3, R1
+LSL R2, #1 @Shifts the register where we’re storing the final value by 1, this way when we add, its just putting the LSB in a zero place
+ADD R3, R3, R2
+AND R2, R7, R0 @The same thing is repeated here
+LSR R2, R2, R1
+LSL R3, #1
+ADD R3, R3, R2 
+AND R2, R6, R0 @And here
+LSR R2, R2, R1 
+LSL R3, #1
+ADD R2, R3, R2  @This will get us our final reflective grey code output.
+LSL R2, R2, #21 @I shift it 21 bits because the LSB must line up with the bits in the GPIO SETOUT  			     @register for the LEDs. 
+MOV R0, #0x1E00000
+LDR R3, =CLEAR @I first clear the previous values, I’ve read that the data must be cleared FIRST 		   	         @before the output can be updated.
+LDR R4, =SETOUT @THEN I set the output
+LDR R3, [R3]
+LDR R4, [R4]
+STR R0, [R3] @R3 is the clear register  Just went through, maybe the address changes when in interrupt mode
+STR R2, [R4] @R4 is the output register
+MOV R3, R5
+LDR R3, =OUTEN @I then enable the output
+LDR R3, [R3]
+MOV R0, #0xFE1FFFFF
+STR   R0, [R3]
+
+LDMFD SP!, {R2-R12, LR} @Then we go back home, returning the current value of R1 
+MOV PC, LR @Going on home
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	check:
+STMFD SP!, {R1-R12, LR} @This checks to see if the button is pressed each cycle. If so, it returns a 0 (Because the button is active low)
+LDR R0, =BUTTON
+LDR R0, [R0]  @We first load from button, then we AND with the value 0x4000
+LDR R0, [R0]  
+AND R0, R0, #0x40000000  @Checks if pressed
+LDMFD SP!, {R1-R12, LR}
+MOV PC, LR     @Goes home
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	INT_DIRECTOR:
+	
+	STMFD SP!, {R0-R3,LR}
+
+	LDR R1, =0x48040028    @Checks if overflow happened
+	LDR R0, [R1]
+	CMP R0, #0x2
+	BNE Interrupt
+	
+	
+	LDR R1, =TIMERC   @ This loads the value from our interrupt counter, timerc.
+	LDR R0, [R1]	  @ Next we check if the value is greater than 9
+	CMP R0, #9        @  
+	ADDLT R0, R0, #1  @  If less than, then we add 1
+	STRLT R0, [R1]    @  
+	BLT Skip          @  
+ 	
+	MOVGE R0, #0      @ If not, we then set timer c to 0
+	STRGE R0, [R1]
+	
+
+	
+	
+	
+	
+
+	LDR R1, =COUNTER   @I keep having problems with registers getting over written, so now I'm keeping it at a totally seperate location.
+	LDR R0, [R1]    
+	ADD R0, R0, #1  @Increments by counter 1
+	STR R0, [R1]
+Skip:	
+	
+	
+
+	
+	LDR R1, =0x48040028  @Address for the timer overflow flag
+	MOV R2, #0x2		 @Value to turn off the timer and its overflow.
+	STR R2, [R1]
+
+
+	MOV R2, #0x03       @This turns on the timer
+	LDR R1, =0x48040038  @this is the address for TCLR
+	STR R2, [R1]
+
+Interrupt:
+	LDR R0, =0x48200048  @address of the interrupt controller flag
+	MOV R2, #01		 @Value to reset
+	STR R2, [R0]
+	MOV R1, R5
+	LDMFD SP!, {R0-R3, LR}
+	SUBS PC, LR, #4
+	
+	
+	
+	
+	
+	
+END:	
+@ == DATA SECTION == 
+@ This section contains data that will be allocated in memory (RAM) when loaded.
+@ A pointer to this allocated space is loaded into R13 (SP).
+.data
+.align 4
+TIMERC: .word 0xFFFF
+COUNTER: .word 0xFFFF
+INTPND: .word 0xFFFF
+BUTTON: .word 0xFF000000
+CLEAR: .word 0xFFFFFF00  @Clear gpio address
+GPIO: .word 0xFFFFFFFC  @Original gpio address
+SETOUT: .word 0xFFFFFFF8 @Output enable address
+OUTEN: .word 0xFFFFFFF0 @Output enable
+STACK1:		.REPT 256
+ 			.BYTE 0x00
+ 			.ENDR
+STACK2:		.REPT 256
+ 			.BYTE 0x00
+ 			.ENDR
+.END
